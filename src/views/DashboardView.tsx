@@ -1,12 +1,7 @@
-import React from 'react';
-import {
-    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-    LineChart, Line, ScatterChart, Scatter, ZAxis, PieChart, Pie, Cell
-} from 'recharts';
+import React, { useMemo } from 'react';
+import { Chart } from "react-google-charts";
 import { Upload, FileSpreadsheet } from 'lucide-react';
 import { useDashboardController } from '../controllers/useDashboardController';
-
-const CORES = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
 export const DashboardView: React.FC = () => {
     const {
@@ -18,13 +13,52 @@ export const DashboardView: React.FC = () => {
 
     const temDados = atendimentos.length > 0;
 
+    // --- PREPARAÇÃO DOS DADOS ---
+
+    // 1. Barras (Simplificado para evitar erro)
+    const dadosBarraGoogle = useMemo(() => {
+        // Cabeçalho simples: Localidade, Quantidade
+        const header = [["Localidade", "Total Atendimentos"]];
+        // Ordena do maior para o menor para ficar bonito
+        const body = dadosGraficoBarras
+            .sort((a: any, b: any) => b.total - a.total)
+            .slice(0, 15) // Pega apenas os TOP 15 para não travar a tela
+            .map((d: any) => [d.nome, d.total]);
+        return header.concat(body);
+    }, [dadosGraficoBarras]);
+
+    // 2. Linha
+    const dadosLinhaGoogle = useMemo(() => {
+        const header = [["Data", "Qtd Animais"]];
+        const body = dadosGraficoLinha.map((d: any) => [
+            d.data.split('-').slice(1).reverse().join('/'),
+            d.quantidade
+        ]);
+        return header.concat(body);
+    }, [dadosGraficoLinha]);
+
+    // 3. Bolhas
+    const dadosBubbleGoogle = useMemo(() => {
+        const header = [["ID", "Qtd Estoque (X)", "Custo Unitário (Y)", "Categoria", "Valor Total"]];
+        const body = dadosGraficoScatter.map((d: any) => [
+            d.name, d.x, d.y, "Insumos", d.z
+        ]);
+        return header.concat(body);
+    }, [dadosGraficoScatter]);
+
+    // 4. Pizza
+    const dadosPizzaGoogle = useMemo(() => {
+        const header = [["Raça", "Doses"]];
+        const body = dadosGraficoPizza.map((d: any) => [d.raca, d.quantidadeDoses]);
+        return header.concat(body);
+    }, [dadosGraficoPizza]);
+
     return (
         <div className="min-h-screen bg-gray-50 font-sans p-8">
-            {/* --- CABEÇALHO --- */}
             <header className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                     <h1 className="text-3xl font-bold text-gray-800">SAD - Gestão Rural Jeceaba</h1>
-                    <p className="text-gray-600">Sistema de Apoio à Decisão</p>
+                    <p className="text-gray-600">Sistema de Apoio à Decisão (Google Charts)</p>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -41,147 +75,104 @@ export const DashboardView: React.FC = () => {
                 </div>
             </header>
 
-            {/* --- ESTADO 1: CARREGANDO --- */}
             {isLoading && (
-                <div className="flex flex-col items-center justify-center py-20">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+                <div className="text-center py-20">
                     <p className="text-xl text-blue-600 animate-pulse">Processando arquivo...</p>
                 </div>
             )}
 
-            {/* --- ESTADO 2: SEM DADOS (INSTRUÇÕES) --- */}
             {!temDados && !isLoading && (
-                <div className="border-2 border-dashed border-gray-300 rounded-xl p-20 text-center bg-white shadow-sm">
-                    <div className="flex justify-center mb-4">
-                        <FileSpreadsheet size={64} className="text-gray-400" />
-                    </div>
-                    <h2 className="text-2xl font-bold text-gray-700 mb-2">Aguardando Dados</h2>
-                    <p className="text-gray-500 max-w-md mx-auto mb-6">
-                        Faça o upload do seu arquivo CSV para visualizar os indicadores.
-                    </p>
+                <div className="border-2 border-dashed border-gray-300 rounded-xl p-20 text-center bg-white">
+                    <FileSpreadsheet size={64} className="mx-auto text-gray-400 mb-4" />
+                    <h2 className="text-2xl font-bold text-gray-700">Aguardando Dados</h2>
+                    <p className="text-gray-500">Faça o upload do arquivo Atendimentos.csv ou Perfil dos Produtores.csv.</p>
                 </div>
             )}
 
-            {/* --- ESTADO 3: DASHBOARD COMPLETO --- */}
             {temDados && !isLoading && (
                 <>
-                    {/* BARRA DE FILTROS */}
-                    <div className="bg-white p-4 rounded-lg shadow-sm mb-6 border-l-4 border-blue-500 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                        <div className="flex items-center gap-2">
-                            <span className="font-semibold text-gray-700">Filtro Localidade:</span>
-                            <select
-                                value={filtroLocal}
-                                onChange={(e) => setFiltroLocal(e.target.value)}
-                                className="border border-gray-300 p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white min-w-[200px]"
-                            >
-                                <option value="Todos">Todas as Localidades</option>
-                                {locaisDisponiveis.map(local => (
-                                    <option key={local} value={local}>{local}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <span className="text-sm text-gray-500 hidden sm:inline">|</span>
-                        <span className="text-sm text-gray-500">
-                            Registros analisados: <strong>{atendimentos.length}</strong>
-                        </span>
+                    <div className="bg-white p-4 rounded-lg shadow-sm mb-6 border-l-4 border-blue-500 flex items-center gap-4">
+                        <span className="font-semibold text-gray-700">Filtro Localidade:</span>
+                        <select
+                            value={filtroLocal}
+                            onChange={(e) => setFiltroLocal(e.target.value)}
+                            className="border border-gray-300 p-2 rounded"
+                        >
+                            <option value="Todos">Todas as Localidades</option>
+                            {locaisDisponiveis.map(local => (
+                                <option key={local} value={local}>{local}</option>
+                            ))}
+                        </select>
                     </div>
 
-                    {/* GRID DE GRÁFICOS */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pb-10">
 
-                        {/* GRÁFICO 1: BARRAS */}
-                        <div className="bg-white p-6 rounded-lg shadow-lg border border-gray-100 min-w-0">
-                            <h2 className="text-xl font-bold mb-1 text-gray-800">Demandas por Localidade</h2>
-                            <div style={{ width: '100%', height: 300 }}>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={dadosGraficoBarras}>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                        <XAxis
-                                            dataKey="nome"
-                                            tick={{ fontSize: 11 }}
-                                            interval={0}
-                                            height={60}
-                                            angle={-15}
-                                            textAnchor="end"
-                                        />
-                                        <YAxis allowDecimals={false} />
-                                        <Tooltip cursor={{ fill: '#f3f4f6' }} />
-                                        <Bar dataKey="total" fill="#4F46E5" name="Serviços" />
-                                    </BarChart>
-                                </ResponsiveContainer>
-                            </div>
+                        {/* 1. TOP 15 LOCALIDADES (BARRAS HORIZONTAIS) */}
+                        <div className="bg-white p-6 rounded-lg shadow-lg">
+                            <h2 className="text-xl font-bold mb-4 text-gray-800">Top 15 Localidades (Demandas)</h2>
+                            <Chart
+                                chartType="BarChart" // Mudado para horizontal para ler melhor os nomes
+                                width="100%"
+                                height="350px"
+                                data={dadosBarraGoogle}
+                                options={{
+                                    legend: { position: "none" },
+                                    hAxis: { title: "Total de Atendimentos" },
+                                    vAxis: { title: "Localidade" },
+                                    colors: ["#4F46E5"]
+                                }}
+                            />
                         </div>
 
-                        {/* GRÁFICO 2: LINHA */}
-                        <div className="bg-white p-6 rounded-lg shadow-lg border border-gray-100 min-w-0">
-                            <h2 className="text-xl font-bold mb-1 text-gray-800">Linha do Tempo</h2>
-                            <div style={{ width: '100%', height: 300 }}>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={dadosGraficoLinha}>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                        <XAxis
-                                            dataKey="data"
-                                            tickFormatter={(d) => {
-                                                // Formata 2025-01-30 para 30/01
-                                                try {
-                                                    return d.split('-').slice(1).reverse().join('/');
-                                                } catch { return d; }
-                                            }}
-                                        />
-                                        <YAxis allowDecimals={false} />
-                                        <Tooltip labelFormatter={(d) => new Date(d).toLocaleDateString('pt-BR')} />
-                                        <Legend />
-                                        <Line type="monotone" dataKey="quantidade" stroke="#10B981" strokeWidth={3} dot={{ r: 4 }} name="Qtd" />
-                                    </LineChart>
-                                </ResponsiveContainer>
-                            </div>
+                        {/* 2. EVOLUÇÃO TEMPORAL */}
+                        <div className="bg-white p-6 rounded-lg shadow-lg">
+                            <h2 className="text-xl font-bold mb-4 text-gray-800">Evolução Temporal (Simulada)</h2>
+                            <Chart
+                                chartType="LineChart"
+                                width="100%"
+                                height="350px"
+                                data={dadosLinhaGoogle}
+                                options={{
+                                    curveType: "function",
+                                    legend: { position: "bottom" },
+                                    pointSize: 4,
+                                    colors: ["#10B981"],
+                                    hAxis: { title: "Data" }
+                                }}
+                            />
                         </div>
 
-                        {/* GRÁFICO 3: SCATTER */}
-                        <div className="bg-white p-6 rounded-lg shadow-lg border border-gray-100 min-w-0">
-                            <h2 className="text-xl font-bold mb-1 text-gray-800">Financeiro (Estoque)</h2>
-                            <div style={{ width: '100%', height: 300 }}>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                                        <CartesianGrid />
-                                        <XAxis type="number" dataKey="x" name="Qtd" unit=" un" />
-                                        <YAxis type="number" dataKey="y" name="Custo" unit=" R$" />
-                                        <ZAxis type="number" dataKey="z" range={[60, 500]} name="Total" />
-                                        <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                                        <Scatter name="Insumos" data={dadosGraficoScatter} fill="#8884d8" />
-                                    </ScatterChart>
-                                </ResponsiveContainer>
-                            </div>
+                        {/* 3. FINANCEIRO (BOLHAS) */}
+                        <div className="bg-white p-6 rounded-lg shadow-lg">
+                            <h2 className="text-xl font-bold mb-4 text-gray-800">Financeiro (Estoque x Custo)</h2>
+                            <Chart
+                                chartType="BubbleChart"
+                                width="100%"
+                                height="350px"
+                                data={dadosBubbleGoogle}
+                                options={{
+                                    colorAxis: { colors: ['#8884d8'] },
+                                    hAxis: { title: "Quantidade em Estoque" },
+                                    vAxis: { title: "Custo Unitário" },
+                                    bubble: { textStyle: { fontSize: 10 } }
+                                }}
+                            />
                         </div>
 
-                        {/* GRÁFICO 4: PIZZA (CORRIGIDO) */}
-                        <div className="bg-white p-6 rounded-lg shadow-lg border border-gray-100 min-w-0">
-                            <h2 className="text-xl font-bold mb-1 text-gray-800">Genética (Raças)</h2>
-                            <div style={{ width: '100%', height: 300 }}>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <PieChart>
-                                        <Pie
-                                            data={dadosGraficoPizza as any[]}
-                                            cx="50%"
-                                            cy="50%"
-                                            labelLine={false}
-                                            // CORREÇÃO AQUI: String() blinda contra valores invalidos e nameKey avisa qual campo usar
-                                            label={({ name, percent }: { name?: any; percent?: number }) =>
-                                                `${String(name || '').substring(0, 10)} ${(percent ?? 0) * 100 > 5 ? ((percent ?? 0) * 100).toFixed(0) + '%' : ''}`
-                                            }
-                                            outerRadius={90}
-                                            fill="#8884d8"
-                                            dataKey="quantidadeDoses"
-                                            nameKey="raca" // <--- Importante: Diz pro grafico que o nome está no campo 'raca'
-                                        >
-                                            {dadosGraficoPizza.map((_, index) => (
-                                                <Cell key={`cell-${index}`} fill={CORES[index % CORES.length]} />
-                                            ))}
-                                        </Pie>
-                                        <Tooltip />
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            </div>
+                        {/* 4. GENÉTICA (PIZZA) */}
+                        <div className="bg-white p-6 rounded-lg shadow-lg">
+                            <h2 className="text-xl font-bold mb-4 text-gray-800">Perfil Genético</h2>
+                            <Chart
+                                chartType="PieChart"
+                                width="100%"
+                                height="350px"
+                                data={dadosPizzaGoogle}
+                                options={{
+                                    pieHole: 0.4,
+                                    legend: { position: 'right' },
+                                    colors: ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8']
+                                }}
+                            />
                         </div>
 
                     </div>
