@@ -9,13 +9,12 @@ export const useDashboardController = () => {
     const [filtroLocal, setFiltroLocal] = useState<string>('Todos');
     const [isLoading, setIsLoading] = useState(false);
 
-    const estoque = service.getEstoque();
-    const genetica = service.getGenetica();
+    // --- NOVO ESTADO: CONTROLE DE TELA ---
+    const [produtorSelecionadoNome, setProdutorSelecionadoNome] = useState<string | null>(null);
 
     const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
-
         setIsLoading(true);
         try {
             const dados = await service.parseAtendimentos(file);
@@ -28,54 +27,52 @@ export const useDashboardController = () => {
         }
     };
 
-    // --- LÓGICA DE INTELIGÊNCIA DE NEGÓCIO ---
+    // --- LOGICA DE SELEÇÃO ---
+    const selecionarProdutor = (nome: string) => {
+        setProdutorSelecionadoNome(nome);
+        // Rola a página para o topo ao trocar de tela
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
 
-    // 1. Filtros Básicos
+    const limparSelecao = () => {
+        setProdutorSelecionadoNome(null);
+    };
+
+    // Dados do produtor selecionado (Memoizado para performance)
+    const dadosProdutorSelecionado = useMemo(() => {
+        if (!produtorSelecionadoNome) return [];
+        return atendimentos.filter(a => a.nomeProdutor === produtorSelecionadoNome);
+    }, [produtorSelecionadoNome, atendimentos]);
+
+
+    // --- RESTO DO CÓDIGO (DASHBOARD GERAL) ---
+    const estoque = service.getEstoque();
+    const genetica = service.getGenetica();
+
     const atendimentosFiltrados = useMemo(() => {
         if (filtroLocal === 'Todos') return atendimentos;
         return atendimentos.filter(item => item.local === filtroLocal);
     }, [filtroLocal, atendimentos]);
 
-    // 2. Ranking de Produtores (Geral)
     const rankingProdutores = useMemo(() => {
         const mapa = new Map<string, { nome: string, visitas: number, horas: number, local: string }>();
-
         atendimentos.forEach(a => {
             if (a.nomeProdutor === "Não Identificado") return;
-
             const atual = mapa.get(a.nomeProdutor) || { nome: a.nomeProdutor, visitas: 0, horas: 0, local: a.local };
             atual.visitas += 1;
             atual.horas += a.horas;
             mapa.set(a.nomeProdutor, atual);
         });
-
         return Array.from(mapa.values()).sort((a, b) => b.visitas - a.visitas);
     }, [atendimentos]);
 
-    // 3. Melhor Produtor por Região
     const destaquePorRegiao = useMemo(() => {
-        const regioes = new Map<string, { melhorProdutor: string, visitas: number }>();
-
-        atendimentos.forEach(a => {
-            if (a.local === "Não Identificado" || a.nomeProdutor === "Não Identificado") return;
-
-            // Contagem simples temporária
-            // (Em um cenário real complexo, faríamos um reduce duplo, mas aqui simplificamos para o último 'top' encontrado ou lógica de campeão)
-            const currentBest = regioes.get(a.local);
-
-            // Lógica simplificada: Se não tem ninguém na região, esse é o melhor.
-            // Para fazer exato precisaria agrupar tudo primeiro. Vamos fazer o agrupamento correto:
-        });
-
-        // Agrupamento Correto: Região -> Produtor -> Contagem
         const tree: Record<string, Record<string, number>> = {};
         atendimentos.forEach(a => {
             if (!tree[a.local]) tree[a.local] = {};
             if (!tree[a.local][a.nomeProdutor]) tree[a.local][a.nomeProdutor] = 0;
             tree[a.local][a.nomeProdutor]++;
         });
-
-        // Encontra o vencedor de cada região
         const resultados = [];
         for (const regiao in tree) {
             let campeao = "";
@@ -86,14 +83,12 @@ export const useDashboardController = () => {
                     campeao = produtor;
                 }
             }
-            if (campeao) resultados.push({ regiao, campeao, visitas: maxVisitas });
+            if (campeao && campeao !== "Não Identificado") resultados.push({ regiao, campeao, visitas: maxVisitas });
         }
-
-        return resultados.sort((a, b) => b.visitas - a.visitas); // Ordena pelas regiões mais ativas
+        return resultados.sort((a, b) => b.visitas - a.visitas);
     }, [atendimentos]);
 
-    // --- DADOS PARA GRÁFICOS (GOOGLE CHARTS) ---
-
+    // Google Charts Data Preparations
     const dadosGraficoBarras = useMemo(() => {
         const agrupado: any = {};
         atendimentosFiltrados.forEach(a => {
@@ -118,12 +113,18 @@ export const useDashboardController = () => {
         handleFileUpload,
         filtroLocal,
         setFiltroLocal,
-        rankingProdutores,  // <--- Novo
-        destaquePorRegiao,  // <--- Novo
+        rankingProdutores,
+        destaquePorRegiao,
         dadosGraficoBarras,
         dadosGraficoLinha,
         dadosGraficoScatter: estoque.map(e => ({ x: e.quantidadeAtual, y: e.custoUnitario, z: e.quantidadeAtual * e.custoUnitario, name: e.nome })),
         dadosGraficoPizza: genetica,
-        locaisDisponiveis: Array.from(new Set(atendimentos.map(a => a.local))).sort()
+        locaisDisponiveis: Array.from(new Set(atendimentos.map(a => a.local))).sort(),
+
+        // Novas exportações para a View
+        produtorSelecionadoNome,
+        selecionarProdutor,
+        limparSelecao,
+        dadosProdutorSelecionado
     };
 };
