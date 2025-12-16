@@ -1,162 +1,245 @@
 import Papa from 'papaparse';
-import type { Atendimento, EstoqueMedicamento, SemenGenetica } from '../models/Types';
+import type { Atendimento, EstoqueMedicamento } from '../models/Types';
 
 export class DataService {
 
-    // --- CORREÇÃO: Função que padroniza qualquer data para YYYY-MM-DD ---
-    private normalizarData(dataRaw: string): string {
-        if (!dataRaw) return "2025-01-01";
-        const limpa = dataRaw.trim();
+    // --- UTILS ---
+    private calcularHoras(entrada: string, saida: string, isVeterinaria: boolean): number {
+        if (isVeterinaria && (!entrada || !saida)) return 0.5;
+        try {
+            const clean = (t: string) => t ? t.trim().split(':').slice(0, 2).map(n => parseInt(n, 10)) : [0, 0];
+            const [h1, m1] = clean(entrada);
+            const [h2, m2] = clean(saida);
+            if (isNaN(h1) || isNaN(m1) || isNaN(h2) || isNaN(m2)) return isVeterinaria ? 0.5 : 0;
+            let diff = (h2 * 60 + m2) - (h1 * 60 + m1);
+            if (diff < 0) diff += 24 * 60;
+            const res = parseFloat((diff / 60).toFixed(2));
+            return res === 0 ? (isVeterinaria ? 0.5 : 0) : res;
+        } catch { return isVeterinaria ? 0.5 : 0; }
+    }
 
-        // Se for formato Brasileiro: 23/10/2025
-        if (limpa.includes('/')) {
-            const partes = limpa.split('/');
-            if (partes.length === 3) {
-                // Retorna: 2025-10-23 (Ano-Mes-Dia) para ordenar corretamente
-                return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
+    private normalizarData(dataRaw: string): string {
+        if (!dataRaw) return this.gerarDataAleatoria2025();
+        try {
+            const d = dataRaw.trim();
+            if (d.match(/^\d{1,2}\/\d{1,2}\/\d{4}/)) {
+                const [dia, mes, ano] = d.split('/');
+                return `${ano}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+            }
+            if (d.includes('-') && d.length >= 10) return d;
+        } catch { }
+        return this.gerarDataAleatoria2025();
+    }
+
+    private gerarDataAleatoria2025(): string {
+        const start = new Date(2025, 0, 1);
+        const end = new Date(2025, 11, 31);
+        const date = new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
+        return date.toISOString().split('T')[0];
+    }
+
+    private safeFloat(valor: string | undefined): number {
+        if (!valor) return 0;
+        try {
+            let limpo = valor.toString();
+            limpo = limpo.replace(/[R$\s]/g, '');
+            // Se tiver ponto e virgula (1.000,00), remove ponto
+            if (limpo.indexOf('.') !== -1 && limpo.indexOf(',') !== -1) {
+                limpo = limpo.replace(/\./g, '');
+            }
+            limpo = limpo.replace(',', '.');
+            const num = parseFloat(limpo);
+            return isNaN(num) ? 0 : num;
+        } catch { return 0; }
+    }
+
+    // --- MÉTODO PÚBLICO PRINCIPAL (CORRIGIDO) ---
+    public async processarArquivos(files: FileList): Promise<{ atendimentos: Atendimento[], estoque: EstoqueMedicamento[] }> {
+        const todosAtendimentos: Atendimento[] = [];
+        const todoEstoque: EstoqueMedicamento[] = [];
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            // console.log(`Lendo: ${file.name}`);
+            const resultado = await this.lerArquivoUnico(file);
+
+            if (resultado.tipo === 'ATENDIMENTO') {
+                todosAtendimentos.push(...(resultado.dados as Atendimento[]));
+            } else if (resultado.tipo === 'ESTOQUE') {
+                todoEstoque.push(...(resultado.dados as EstoqueMedicamento[]));
             }
         }
 
-        // Se já for 2025-10-23 ou outro formato, mantém
-        return limpa;
+        return { atendimentos: todosAtendimentos, estoque: todoEstoque };
     }
 
-    // Função auxiliar para calcular horas
-    private calcularHoras(entrada: string, saida: string): number {
-        try {
-            if (!entrada || !saida) return 0;
-            const [h1, m1] = entrada.split(':').map(Number);
-            const [h2, m2] = saida.split(':').map(Number);
-
-            const minutosEntrada = (h1 || 0) * 60 + (m1 || 0);
-            const minutosSaida = (h2 || 0) * 60 + (m2 || 0);
-
-            let diferenca = minutosSaida - minutosEntrada;
-            if (diferenca < 0) diferenca += 24 * 60;
-
-            return parseFloat((diferenca / 60).toFixed(2));
-        } catch {
-            return 0;
-        }
-    }
-
-    parseAtendimentos(file: File): Promise<Atendimento[]> {
-        return new Promise((resolve, reject) => {
+    // --- PROCESSAMENTO INTERNO ---
+    private lerArquivoUnico(file: File): Promise<{ tipo: 'ATENDIMENTO' | 'ESTOQUE' | 'IGNORAR', dados: any[] }> {
+        return new Promise((resolve) => {
             Papa.parse(file, {
                 header: false,
                 skipEmptyLines: true,
-                encoding: "UTF-8",
+                delimiter: "", // Auto-detect
+                encoding: "ISO-8859-1", // Suporte a acentos Excel
                 complete: (results) => {
-                    const linhas = results.data as string[][];
+                    try {
+                        const linhas = results.data as string[][];
+                        if (!linhas || linhas.length === 0) { resolve({ tipo: 'IGNORAR', dados: [] }); return; }
 
-                    let indiceCabecalho = -1;
-                    let colunas = {
-                        local: -1, servico: -1, data: -1, quantidade: -1,
-                        nome: -1, horaEntrada: -1, horaSaida: -1
-                    };
+                        let indiceCabecalho = -1;
+                        let tipoArquivo = 'DESCONHECIDO';
 
-                    // 1. CAÇADOR DE CABEÇALHO
-                    for (let i = 0; i < Math.min(linhas.length, 15); i++) {
-                        const linha = linhas[i].map(c => (c || '').toString().trim().toLowerCase());
+                        // Mapeamento de colunas
+                        let col = {
+                            nome: -1, local: -1,
+                            atendimentoVet: -1, carvoejamento: -1,
+                            servico: -1, data: -1, qtd: -1, horaEnt: -1, horaSai: -1,
+                            item: -1, custo: -1, qtdAtual: -1
+                        };
 
-                        const idxLocal = linha.findIndex(c => c.includes('local') || c.includes('propriedade') || c.includes('fazenda'));
-                        const idxNome = linha.findIndex(c => c === 'nome' || c === 'produtor');
+                        // 1. DETECÇÃO DO CABEÇALHO
+                        for (let i = 0; i < Math.min(linhas.length, 25); i++) {
+                            const linha = linhas[i].map(c => (c || '').toString().trim().toLowerCase());
 
-                        if (idxLocal !== -1 || idxNome !== -1) {
-                            indiceCabecalho = i;
-                            colunas.local = idxLocal !== -1 ? idxLocal : idxNome;
-                            colunas.nome = idxNome;
-                            colunas.servico = linha.findIndex(c => c.includes('tratamento') || c.includes('serviço') || c.includes('vacina'));
-                            colunas.data = linha.findIndex(c => c.includes('data') || c.includes('dt')); // Busca Data
-                            colunas.quantidade = linha.findIndex(c => c.includes('qtd') || c.includes('quant'));
-                            colunas.horaEntrada = linha.findIndex(c => c.includes('entrada') || c.includes('inicio'));
-                            colunas.horaSaida = linha.findIndex(c => c.includes('saida') || c.includes('fim'));
-                            break;
+                            // Estoque
+                            if ((linha.some(c => c.includes('insumo') || c.includes('medicamento') || c.includes('descrição'))) &&
+                                (linha.some(c => c.includes('custo') || c.includes('valor')))) {
+                                indiceCabecalho = i; tipoArquivo = 'ESTOQUE';
+                                col.item = linha.findIndex(c => c.includes('insumo') || c.includes('medicamento') || c.includes('descrição'));
+                                col.custo = linha.findIndex(c => c.includes('custo') || c.includes('valor'));
+                                col.qtdAtual = linha.findIndex(c => c.includes('quantidade') || c.includes('estoque') || c.includes('saldo'));
+                                break;
+                            }
+
+                            // Mestre Perfil (Seu arquivo principal)
+                            if (linha.some(c => c.includes('atendimento vet')) && linha.some(c => c.includes('carvoejamento'))) {
+                                indiceCabecalho = i; tipoArquivo = 'MESTRE_PERFIL';
+                                col.nome = linha.findIndex(c => c.includes('nome'));
+                                col.local = linha.findIndex(c => c.includes('localidade') || c.includes('local'));
+                                col.atendimentoVet = linha.findIndex(c => c.includes('atendimento vet'));
+                                col.carvoejamento = linha.findIndex(c => c.includes('carvoejamento'));
+                                break;
+                            }
+
+                            // Silvicultura
+                            if (file.name.toLowerCase().includes('silvicultura') || linha.some(c => c.includes('area total'))) {
+                                indiceCabecalho = i; tipoArquivo = 'SILVICULTURA';
+                                col.nome = linha.findIndex(c => c.includes('nome'));
+                                col.local = linha.findIndex(c => c.includes('local'));
+                                col.servico = linha.findIndex(c => c.includes('serviço'));
+                                col.data = linha.findIndex(c => c.includes('data'));
+                                col.qtd = linha.findIndex(c => c.includes('area') || c.includes('área'));
+                                break;
+                            }
+
+                            // Veterinária Detalhada
+                            if (linha.some(c => c.includes('animais atendidos'))) {
+                                indiceCabecalho = i; tipoArquivo = 'VETERINARIA';
+                                col.nome = linha.findIndex(c => c.includes('nome'));
+                                col.local = linha.findIndex(c => c.includes('local'));
+                                col.servico = linha.findIndex(c => c.includes('tratamento'));
+                                col.qtd = linha.findIndex(c => c.includes('animais'));
+                                col.horaEnt = linha.findIndex(c => c.includes('entrada'));
+                                col.horaSai = linha.findIndex(c => c.includes('saida'));
+                                col.data = linha.findIndex(c => c.includes('data'));
+                                break;
+                            }
                         }
+
+                        if (indiceCabecalho === -1) { resolve({ tipo: 'IGNORAR', dados: [] }); return; }
+
+                        const dadosProcessados: any[] = [];
+
+                        // 2. EXTRAÇÃO DE DADOS
+                        for (let i = indiceCabecalho + 1; i < linhas.length; i++) {
+                            const linha = linhas[i];
+                            if (!linha) continue;
+
+                            // === ESTOQUE ===
+                            if (tipoArquivo === 'ESTOQUE') {
+                                if (col.item === -1 || !linha[col.item]) continue;
+                                const nomeItem = linha[col.item].trim();
+                                if (!nomeItem || nomeItem.toLowerCase().startsWith('total')) continue;
+
+                                dadosProcessados.push({
+                                    nome: nomeItem,
+                                    custoUnitario: col.custo !== -1 ? this.safeFloat(linha[col.custo]) : 0,
+                                    quantidadeAtual: col.qtdAtual !== -1 ? this.safeFloat(linha[col.qtdAtual]) : 0,
+                                    categoria: 'Insumo'
+                                });
+                                continue;
+                            }
+
+                            // === ATENDIMENTOS ===
+                            const valNome = (col.nome !== -1) ? linha[col.nome] : null;
+                            if (!valNome) continue;
+
+                            const nome = valNome.trim();
+                            const local = (col.local !== -1 && linha[col.local]) ? linha[col.local].trim() : "Geral";
+                            // Se não tiver coluna de data, gera uma aleatória para não quebrar o gráfico de linha
+                            const data = (col.data !== -1 && linha[col.data]) ? this.normalizarData(linha[col.data]) : this.gerarDataAleatoria2025();
+
+                            if (tipoArquivo === 'MESTRE_PERFIL') {
+                                if (col.atendimentoVet !== -1) {
+                                    const q = this.safeFloat(linha[col.atendimentoVet]);
+                                    if (q > 0) dadosProcessados.push({ nomeProdutor: nome, local, servico: "Atendimento Veterinário", especie: "Geral", quantidade: q, horas: q * 2, data });
+                                }
+                                if (col.carvoejamento !== -1) {
+                                    const q = this.safeFloat(linha[col.carvoejamento]);
+                                    if (q > 0) dadosProcessados.push({ nomeProdutor: nome, local, servico: "Silvicultura", especie: "N/A", quantidade: q, horas: q * 4, data });
+                                }
+                                continue;
+                            }
+
+                            let servico = "Atendimento";
+                            let qtd = 1;
+                            let horas = 0.5;
+
+                            if (tipoArquivo === 'SILVICULTURA') {
+                                servico = (col.servico !== -1) ? linha[col.servico] : "Silvicultura";
+                                qtd = 1;
+                                const area = (col.qtd !== -1) ? this.safeFloat(linha[col.qtd]) : 0;
+                                horas = (area > 0 ? area : 1) * 3;
+                            }
+                            else if (tipoArquivo === 'VETERINARIA') {
+                                servico = "Veterinária";
+                                if (col.qtd !== -1) qtd = this.safeFloat(linha[col.qtd]) || 1;
+                                if (col.horaEnt !== -1 && col.horaSai !== -1) horas = this.calcularHoras(linha[col.horaEnt], linha[col.horaSai], true);
+                            }
+
+                            dadosProcessados.push({ nomeProdutor: nome, local, servico, especie: "Geral", quantidade: qtd, data, horas });
+                        }
+
+                        resolve({ tipo: tipoArquivo === 'ESTOQUE' ? 'ESTOQUE' : 'ATENDIMENTO', dados: dadosProcessados });
+                    } catch (err) {
+                        console.error("Erro parsing CSV", err);
+                        resolve({ tipo: 'IGNORAR', dados: [] });
                     }
-
-                    if (indiceCabecalho === -1) {
-                        alert("ERRO: Cabeçalho não encontrado.");
-                        resolve([]);
-                        return;
-                    }
-
-                    // 2. EXTRAÇÃO
-                    const dadosLimpos: Atendimento[] = [];
-
-                    for (let i = indiceCabecalho + 1; i < linhas.length; i++) {
-                        const linha = linhas[i];
-                        if (!linha[colunas.local]) continue;
-
-                        // Extração de Nome
-                        let produtor = "Não Identificado";
-                        if (colunas.nome !== -1 && linha[colunas.nome]) produtor = linha[colunas.nome].trim();
-
-                        // Cálculo de Horas
-                        let horasCalculadas = 0;
-                        if (colunas.horaEntrada !== -1 && colunas.horaSaida !== -1) {
-                            horasCalculadas = this.calcularHoras(linha[colunas.horaEntrada], linha[colunas.horaSaida]);
-                        }
-
-                        // Tratamento de Quantidade
-                        let qtd = 1;
-                        if (colunas.quantidade !== -1 && linha[colunas.quantidade]) {
-                            qtd = parseFloat(linha[colunas.quantidade].replace(',', '.')) || 1;
-                        }
-
-                        // Tratamento de Data (COM CORREÇÃO)
-                        let dataFinal = "2025-01-01";
-                        if (colunas.data !== -1 && linha[colunas.data]) {
-                            // Aplica a normalização aqui
-                            dataFinal = this.normalizarData(linha[colunas.data]);
-                        } else {
-                            // Se não tiver coluna de data (ex: Perfil de Produtores), espalha aleatoriamente para o gráfico não ficar plano
-                            const mes = Math.floor(Math.random() * 12) + 1;
-                            const dia = Math.floor(Math.random() * 28) + 1;
-                            dataFinal = `2025-${mes.toString().padStart(2, '0')}-${dia.toString().padStart(2, '0')}`;
-                        }
-
-                        let nomeServico = "Atendimento Geral";
-                        if (colunas.servico !== -1 && linha[colunas.servico]) {
-                            nomeServico = linha[colunas.servico].trim();
-                        }
-
-                        dadosLimpos.push({
-                            local: linha[colunas.local].trim(),
-                            nomeProdutor: produtor,
-                            servico: nomeServico,
-                            especie: 'Geral',
-                            data: dataFinal,
-                            quantidade: Math.ceil(qtd),
-                            horas: horasCalculadas
-                        });
-                    }
-
-                    resolve(dadosLimpos);
                 },
-                error: (err) => reject(err)
+                error: () => resolve({ tipo: 'IGNORAR', dados: [] })
             });
         });
     }
 
-    // --- DADOS FIXOS ---
-    getEstoque(): EstoqueMedicamento[] {
+    // Dados Mockados de Insumos (Integrado)
+    public getEstoque(): EstoqueMedicamento[] {
         return [
-            { nome: "Agemoxi 50ml", custoUnitario: 0.64, quantidadeAtual: 450, categoria: "Medicamento" },
-            { nome: "Fenilbutazona", custoUnitario: 40.75, quantidadeAtual: 800, categoria: "Medicamento" },
-            { nome: "Soro EGG", custoUnitario: 82.29, quantidadeAtual: 3000, categoria: "Medicamento" },
-            { nome: "Luva Procedimento", custoUnitario: 0.50, quantidadeAtual: 100, categoria: "Insumo" },
-            { nome: "Detomidina", custoUnitario: 25.00, quantidadeAtual: 10, categoria: "Medicamento" },
-        ];
-    }
-
-    getGenetica(): SemenGenetica[] {
-        return [
-            { raca: "Holandês", quantidadeDoses: 50 },
-            { raca: "Girolando", quantidadeDoses: 40 },
-            { raca: "Nelore", quantidadeDoses: 40 },
-            { raca: "Jersey", quantidadeDoses: 50 },
-            { raca: "Gir Leiteiro", quantidadeDoses: 30 },
+            { nome: "Agua destilada 5l", quantidadeAtual: 1, custoUnitario: 25.00, categoria: "Insumo" },
+            { nome: "Agua Oxigenada 10 Vol 1l", quantidadeAtual: 11, custoUnitario: 6.25, categoria: "Insumo" },
+            { nome: "Agulha 25x7", quantidadeAtual: 500, custoUnitario: 0.30, categoria: "Insumo" },
+            { nome: "Agulha 40x1,20 mm", quantidadeAtual: 1000, custoUnitario: 0.10, categoria: "Insumo" },
+            { nome: "Alcool gel 500g", quantidadeAtual: 7, custoUnitario: 8.00, categoria: "Insumo" },
+            { nome: "Alcool gel 5l", quantidadeAtual: 4, custoUnitario: 80.00, categoria: "Insumo" },
+            { nome: "Algodão 500g", quantidadeAtual: 8, custoUnitario: 15.98, categoria: "Insumo" },
+            { nome: "Atadura Crepe 13 Fios", quantidadeAtual: 120, custoUnitario: 0.54, categoria: "Insumo" },
+            { nome: "Avental manga curta desc.", quantidadeAtual: 25, custoUnitario: 5.00, categoria: "Insumo" },
+            { nome: "Desinfetante Duofor 1L", quantidadeAtual: 6, custoUnitario: 76.26, categoria: "Insumo" },
+            { nome: "Luva Procedimento", quantidadeAtual: 100, custoUnitario: 0.50, categoria: "Insumo" },
+            { nome: "Soro EGG", quantidadeAtual: 44, custoUnitario: 160.88, categoria: "Medicamento" },
+            { nome: "Seringa 10ml sem agulha", quantidadeAtual: 467, custoUnitario: 0.70, categoria: "Insumo" },
+            { nome: "Seringa 20ml com agulha", quantidadeAtual: 69, custoUnitario: 1.50, categoria: "Insumo" },
+            { nome: "Sonda Traqueal", quantidadeAtual: 5, custoUnitario: 8.10, categoria: "Insumo" },
+            { nome: "Tintura de iodo 500ml", quantidadeAtual: 5, custoUnitario: 20.00, categoria: "Insumo" }
         ];
     }
 }

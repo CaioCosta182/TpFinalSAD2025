@@ -1,94 +1,109 @@
 import { useState, useMemo } from 'react';
 import { DataService } from '../services/DataService';
-import type { Atendimento } from '../models/Types';
+import type { Atendimento, EstoqueMedicamento } from '../models/Types';
 
 const service = new DataService();
 
 export const useDashboardController = () => {
     const [atendimentos, setAtendimentos] = useState<Atendimento[]>([]);
+    // Inicializa com dados mockados integrados ou vazio
+    const [estoque, setEstoque] = useState<EstoqueMedicamento[]>(service.getEstoque());
+
     const [filtroLocal, setFiltroLocal] = useState<string>('Todos');
     const [isLoading, setIsLoading] = useState(false);
-
-    // --- NOVO ESTADO: CONTROLE DE TELA ---
     const [produtorSelecionadoNome, setProdutorSelecionadoNome] = useState<string | null>(null);
 
     const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
+        const files = event.target.files;
+        if (!files || files.length === 0) return;
+
         setIsLoading(true);
         try {
-            const dados = await service.parseAtendimentos(file);
-            setAtendimentos(dados);
+            const resultado = await service.processarArquivos(files);
+
+            if (resultado.atendimentos.length > 0) {
+                setAtendimentos(prev => [...prev, ...resultado.atendimentos]);
+            }
+
+            if (resultado.estoque.length > 0) {
+                setEstoque(resultado.estoque);
+            }
         } catch (error) {
             console.error(error);
-            alert("Erro ao processar arquivo.");
+            alert("Erro ao processar arquivos.");
         } finally {
             setIsLoading(false);
         }
     };
 
-    // --- LOGICA DE SELEÇÃO ---
     const selecionarProdutor = (nome: string) => {
         setProdutorSelecionadoNome(nome);
-        // Rola a página para o topo ao trocar de tela
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
+    const limparSelecao = () => setProdutorSelecionadoNome(null);
 
-    const limparSelecao = () => {
-        setProdutorSelecionadoNome(null);
-    };
-
-    // Dados do produtor selecionado (Memoizado para performance)
     const dadosProdutorSelecionado = useMemo(() => {
         if (!produtorSelecionadoNome) return [];
         return atendimentos.filter(a => a.nomeProdutor === produtorSelecionadoNome);
     }, [produtorSelecionadoNome, atendimentos]);
-
-
-    // --- RESTO DO CÓDIGO (DASHBOARD GERAL) ---
-    const estoque = service.getEstoque();
-    const genetica = service.getGenetica();
 
     const atendimentosFiltrados = useMemo(() => {
         if (filtroLocal === 'Todos') return atendimentos;
         return atendimentos.filter(item => item.local === filtroLocal);
     }, [filtroLocal, atendimentos]);
 
+    // Lista de produtores filtrados (Corrigido para ser usado na View)
+    const produtoresDaRegiao = useMemo(() => {
+        if (filtroLocal === 'Todos') return [];
+        const mapa = new Map<string, { nome: string, totalAtendimentos: number }>();
+        atendimentosFiltrados.forEach(a => {
+            if (a.nomeProdutor === "Não Identificado") return;
+            const atual = mapa.get(a.nomeProdutor) || { nome: a.nomeProdutor, totalAtendimentos: 0 };
+            atual.totalAtendimentos += a.quantidade;
+            mapa.set(a.nomeProdutor, atual);
+        });
+        return Array.from(mapa.values()).sort((a, b) => b.totalAtendimentos - a.totalAtendimentos);
+    }, [atendimentosFiltrados, filtroLocal]);
+
+    // Ranking Geral (Corrigido propriedade 'visitas' para 'totalAtendimentos')
     const rankingProdutores = useMemo(() => {
-        const mapa = new Map<string, { nome: string, visitas: number, horas: number, local: string }>();
+        const mapa = new Map<string, { nome: string, totalAtendimentos: number, horas: number, local: string }>();
         atendimentos.forEach(a => {
             if (a.nomeProdutor === "Não Identificado") return;
-            const atual = mapa.get(a.nomeProdutor) || { nome: a.nomeProdutor, visitas: 0, horas: 0, local: a.local };
-            atual.visitas += 1;
+            const atual = mapa.get(a.nomeProdutor) || { nome: a.nomeProdutor, totalAtendimentos: 0, horas: 0, local: a.local };
+            atual.totalAtendimentos += a.quantidade;
             atual.horas += a.horas;
             mapa.set(a.nomeProdutor, atual);
         });
-        return Array.from(mapa.values()).sort((a, b) => b.visitas - a.visitas);
+        return Array.from(mapa.values()).sort((a, b) => b.totalAtendimentos - a.totalAtendimentos);
     }, [atendimentos]);
 
+    // Destaque Regional (Corrigido propriedade 'visitas' para 'totalAtendimentos')
     const destaquePorRegiao = useMemo(() => {
         const tree: Record<string, Record<string, number>> = {};
         atendimentos.forEach(a => {
             if (!tree[a.local]) tree[a.local] = {};
             if (!tree[a.local][a.nomeProdutor]) tree[a.local][a.nomeProdutor] = 0;
-            tree[a.local][a.nomeProdutor]++;
+            tree[a.local][a.nomeProdutor] += a.quantidade;
         });
         const resultados = [];
         for (const regiao in tree) {
             let campeao = "";
-            let maxVisitas = 0;
+            let maxTotal = 0;
             for (const produtor in tree[regiao]) {
-                if (tree[regiao][produtor] > maxVisitas) {
-                    maxVisitas = tree[regiao][produtor];
+                if (tree[regiao][produtor] > maxTotal) {
+                    maxTotal = tree[regiao][produtor];
                     campeao = produtor;
                 }
             }
-            if (campeao && campeao !== "Não Identificado") resultados.push({ regiao, campeao, visitas: maxVisitas });
+            if (campeao && campeao !== "Não Identificado") {
+                resultados.push({ regiao, campeao, totalAtendimentos: maxTotal });
+            }
         }
-        return resultados.sort((a, b) => b.visitas - a.visitas);
+        return resultados.sort((a, b) => b.totalAtendimentos - a.totalAtendimentos);
     }, [atendimentos]);
 
-    // Google Charts Data Preparations
+    // Gráficos
     const dadosGraficoBarras = useMemo(() => {
         const agrupado: any = {};
         atendimentosFiltrados.forEach(a => {
@@ -107,24 +122,34 @@ export const useDashboardController = () => {
         return Object.values(porData).sort((a: any, b: any) => a.data.localeCompare(b.data));
     }, [atendimentosFiltrados]);
 
-    return {
-        atendimentos,
-        isLoading,
-        handleFileUpload,
-        filtroLocal,
-        setFiltroLocal,
-        rankingProdutores,
-        destaquePorRegiao,
-        dadosGraficoBarras,
-        dadosGraficoLinha,
-        dadosGraficoScatter: estoque.map(e => ({ x: e.quantidadeAtual, y: e.custoUnitario, z: e.quantidadeAtual * e.custoUnitario, name: e.nome })),
-        dadosGraficoPizza: genetica,
-        locaisDisponiveis: Array.from(new Set(atendimentos.map(a => a.local))).sort(),
+    // Corrigido: Exportando dadosGraficoServicos
+    const dadosGraficoServicos = useMemo(() => {
+        const count: Record<string, number> = {};
+        atendimentosFiltrados.forEach(a => {
+            const s = a.servico || "Outros";
+            count[s] = (count[s] || 0) + a.quantidade;
+        });
+        return Object.entries(count)
+            .map(([servico, qtd]) => ({ servico, qtd }))
+            .sort((a, b) => b.qtd - a.qtd);
+    }, [atendimentosFiltrados]);
 
-        // Novas exportações para a View
-        produtorSelecionadoNome,
-        selecionarProdutor,
-        limparSelecao,
-        dadosProdutorSelecionado
+    const dadosGraficoScatter = useMemo(() => {
+        return estoque.map(e => ({
+            x: e.quantidadeAtual,
+            y: e.custoUnitario,
+            z: e.quantidadeAtual * e.custoUnitario,
+            name: e.nome,
+            categoria: e.categoria
+        }));
+    }, [estoque]);
+
+    return {
+        atendimentos, isLoading, handleFileUpload,
+        filtroLocal, setFiltroLocal,
+        rankingProdutores, destaquePorRegiao, produtoresDaRegiao, // Adicionado produtoresDaRegiao
+        dadosGraficoBarras, dadosGraficoLinha, dadosGraficoScatter, dadosGraficoServicos, // Adicionado dadosGraficoServicos
+        locaisDisponiveis: Array.from(new Set(atendimentos.map(a => a.local))).sort(),
+        produtorSelecionadoNome, selecionarProdutor, limparSelecao, dadosProdutorSelecionado
     };
 };
