@@ -53,7 +53,7 @@ export class DataService {
         } catch { return 0; }
     }
 
-    // --- MÉTODO PÚBLICO PRINCIPAL (CORRIGIDO) ---
+    // --- MÉTODO PÚBLICO PRINCIPAL ---
     public async processarArquivos(files: FileList): Promise<{ atendimentos: Atendimento[], estoque: EstoqueMedicamento[] }> {
         const todosAtendimentos: Atendimento[] = [];
         const todoEstoque: EstoqueMedicamento[] = [];
@@ -111,7 +111,7 @@ export class DataService {
                                 break;
                             }
 
-                            // Mestre Perfil (Seu arquivo principal)
+                            // Mestre Perfil
                             if (linha.some(c => c.includes('atendimento vet')) && linha.some(c => c.includes('carvoejamento'))) {
                                 indiceCabecalho = i; tipoArquivo = 'MESTRE_PERFIL';
                                 col.nome = linha.findIndex(c => c.includes('nome'));
@@ -221,7 +221,7 @@ export class DataService {
         });
     }
 
-    // Dados Mockados de Insumos (Integrado)
+
     public getEstoque(): EstoqueMedicamento[] {
         return [
             { nome: "Agua destilada 5l", quantidadeAtual: 1, custoUnitario: 25.00, categoria: "Insumo" },

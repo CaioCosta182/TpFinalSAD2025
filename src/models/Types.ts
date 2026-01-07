@@ -5,7 +5,6 @@ export interface Atendimento {
     especie: string;
     data: string;
     quantidade: number;
-    // Novos campos para análise detalhada
     nomeProdutor: string;
     horas: number;
 }

@@ -46,8 +46,7 @@ export const ProdutorDetailView: React.FC<ProdutorDetailProps> = ({ nome, dados,
     return (
         <div className="min-h-screen bg-[#3B82F6] flex justify-center py-16 px-6 md:p-24 font-sans text-slate-800 relative">
 
-            {/* --- MODIFICAÇÃO: BOTÃO FIXO NO CANTO SUPERIOR ESQUERDO --- */}
-            {/* Ocupa o canto da tela (viewport) independente da rolagem */}
+            {/* 1. BOTÃO VOLTAR FIXO */}
             <div className="fixed top-0 left-0 p-6 z-50">
                 <button
                     onClick={onVoltar}

@@ -6,7 +6,7 @@ const service = new DataService();
 
 export const useDashboardController = () => {
     const [atendimentos, setAtendimentos] = useState<Atendimento[]>([]);
-    // Inicializa com dados mockados integrados ou vazio
+
     const [estoque, setEstoque] = useState<EstoqueMedicamento[]>(service.getEstoque());
 
     const [filtroLocal, setFiltroLocal] = useState<string>('Todos');
@@ -52,7 +52,6 @@ export const useDashboardController = () => {
         return atendimentos.filter(item => item.local === filtroLocal);
     }, [filtroLocal, atendimentos]);
 
-    // Lista de produtores filtrados (Corrigido para ser usado na View)
     const produtoresDaRegiao = useMemo(() => {
         if (filtroLocal === 'Todos') return [];
         const mapa = new Map<string, { nome: string, totalAtendimentos: number }>();
@@ -65,7 +64,6 @@ export const useDashboardController = () => {
         return Array.from(mapa.values()).sort((a, b) => b.totalAtendimentos - a.totalAtendimentos);
     }, [atendimentosFiltrados, filtroLocal]);
 
-    // Ranking Geral (Corrigido propriedade 'visitas' para 'totalAtendimentos')
     const rankingProdutores = useMemo(() => {
         const mapa = new Map<string, { nome: string, totalAtendimentos: number, horas: number, local: string }>();
         atendimentos.forEach(a => {
@@ -78,7 +76,6 @@ export const useDashboardController = () => {
         return Array.from(mapa.values()).sort((a, b) => b.totalAtendimentos - a.totalAtendimentos);
     }, [atendimentos]);
 
-    // Destaque Regional (Corrigido propriedade 'visitas' para 'totalAtendimentos')
     const destaquePorRegiao = useMemo(() => {
         const tree: Record<string, Record<string, number>> = {};
         atendimentos.forEach(a => {
@@ -122,7 +119,6 @@ export const useDashboardController = () => {
         return Object.values(porData).sort((a: any, b: any) => a.data.localeCompare(b.data));
     }, [atendimentosFiltrados]);
 
-    // Corrigido: Exportando dadosGraficoServicos
     const dadosGraficoServicos = useMemo(() => {
         const count: Record<string, number> = {};
         atendimentosFiltrados.forEach(a => {
